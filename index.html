@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8398161859137802"
+     crossorigin="anonymous"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>東京 1人焼肉DB検索アプリ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#101014;color:#fff;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{padding:24px;background:linear-gradient(135deg,#3b0a0a,#b45309,#f97316);text-align:center}
+header h1{margin:0;font-size:28px}
+header p{margin:8px 0 0;color:#ffedd5}
+.wrap{max-width:1200px;margin:auto;padding:16px}
+.grid{display:grid;grid-template-columns:390px 1fr;gap:16px}
+.panel{background:#1c1917;border-radius:18px;padding:16px;border:1px solid rgba(255,255,255,.12);box-shadow:0 18px 50px rgba(0,0,0,.22)}
+label{display:block;margin:10px 0 6px;font-weight:800}
+input,select,textarea{width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:#0f0f12;color:#fff}
+textarea{min-height:210px;font-family:Consolas,monospace;white-space:pre;overflow:auto}
+button{border:0;border-radius:12px;padding:11px 14px;background:#ea580c;color:#fff;font-weight:800;cursor:pointer}
+button.secondary{background:#44403c}
+button.danger{background:#dc2626}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+#map{height:620px;border-radius:18px;background:#374151}
+.small{font-size:13px;color:#d6d3d1;line-height:1.6}
+.results{display:grid;gap:10px;max-height:560px;overflow:auto;margin-top:12px}
+.shop{background:#0f0f12;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:12px}
+.shop h3{margin:0 0 6px;color:#fed7aa;font-size:16px}
+.shop p{margin:4px 0;color:#d6d3d1;font-size:14px}
+.tag{display:inline-block;background:#3f3f46;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px}
+.score{display:inline-block;background:#7c2d12;color:#ffedd5;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;font-weight:800}
+#dataBox{display:none}
+.err{background:#3f1d1d;color:#fecaca;border:1px solid #7f1d1d;padding:10px;border-radius:12px;white-space:pre-wrap}
+.ok{background:#063b2c;color:#bbf7d0;border:1px solid #16a34a;padding:10px;border-radius:12px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}#map{height:430px}}
+</style>
+</head>
+<body>
+<header>
+<h1>東京 1人焼肉DB検索アプリ</h1>
+<p>カウンター・ランチ・ひとり入りやすさで探せる焼肉データベース</p>
+</header>
+
+<main class="wrap">
+<div class="grid">
+<section class="panel">
+<label>エリア</label>
+<select id="areaMode"></select>
+
+<label>キーワード</label>
+<input id="keyword" placeholder="店名・住所・タグで検索 例：カウンター ランチ 新宿">
+
+<div class="btns">
+<button onclick="applySearch()">検索</button>
+<button class="secondary" onclick="showData()">CSV貼り付け</button>
+<button class="secondary" onclick="showResults()">検索結果</button>
+<button class="danger" onclick="resetStores()">初期化</button>
+</div>
+
+<p id="status" class="small"></p>
+<div id="message"></div>
+
+<div id="resultsBox" class="results"></div>
+
+<div id="dataBox">
+<p class="small">
+対応CSV：<br>
+id,name,area,address,lat,lng,tags<br>
+または<br>
+id,name,type,area,cityArea,address,lat,lng,rating,tags,memo<br><br>
+tags例：カウンター|一人向き|ランチ|駅近|焼肉ライク系
+</p>
+<label>CSV貼り付け</label>
+<textarea id="csvInput"></textarea>
+<div class="btns">
+<button onclick="applyCsv()">CSVを反映</button>
+<button class="secondary" onclick="exportCsv()">現在データをCSV欄へ</button>
+</div>
+
+<label>JSON確認</label>
+<textarea id="jsonBox"></textarea>
+</div>
+</section>
+
+<section class="panel">
+<div id="map"></div>
+<p class="small">※来店前に営業日・営業時間・価格・閉店情報を公式サイトやGoogleマップで確認してください。</p>
+</section>
+</div>
+</main>
+
+<script>
+const STORAGE_KEY = "tokyo_solo_yakiniku_db_v1";
+
+// GoogleスプレッドシートCSVを使う場合は、下に公開CSV URLを入れてください。
+// 例: const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ_MPNoRxaXIHrHRiS8we53_YJ1F1h2gFreL5cUcMXNdxYrDC8ZiHw7o6bla6QGpf74EtkePYnE-uJb/pub?output=csv";
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ_MPNoRxaXIHrHRiS8we53_YJ1F1h2gFreL5cUcMXNdxYrDC8ZiHw7o6bla6QGpf74EtkePYnE-uJb/pub?output=csv";
+
+const DEFAULT_STORES = [
+  {id:"solo_yakiniku_001",name:"焼肉ライク 新橋本店",type:"1人焼肉",area:"tokyo",cityArea:"新橋",address:"東京都港区新橋2-15-8",lat:35.6669,lng:139.7566,rating:5,tags:["新橋","カウンター","一人向き","駅近","ランチ","焼肉ライク系"],memo:"1人焼肉向けの代表格。"},
+  {id:"solo_yakiniku_002",name:"焼肉ライク 渋谷宇田川町店",type:"1人焼肉",area:"tokyo",cityArea:"渋谷",address:"東京都渋谷区宇田川町31-4",lat:35.6613,lng:139.6989,rating:5,tags:["渋谷","カウンター","一人向き","駅近","ランチ"],memo:"渋谷でひとり焼肉しやすい店舗。"},
+  {id:"solo_yakiniku_003",name:"焼肉ライク 新宿南口店",type:"1人焼肉",area:"tokyo",cityArea:"新宿",address:"東京都新宿区新宿3-35-13",lat:35.6890,lng:139.7037,rating:5,tags:["新宿","カウンター","一人向き","駅近","ランチ"],memo:"新宿駅南口エリア。"},
+  {id:"solo_yakiniku_004",name:"焼肉ライク 上野店",type:"1人焼肉",area:"tokyo",cityArea:"上野",address:"東京都台東区上野4-8-3",lat:35.7101,lng:139.7742,rating:5,tags:["上野","カウンター","一人向き","駅近","ランチ"],memo:"上野買い物ついでに使いやすい。"},
+  {id:"solo_yakiniku_005",name:"焼肉ライク 秋葉原電気街店",type:"1人焼肉",area:"tokyo",cityArea:"秋葉原",address:"東京都千代田区外神田1-15-18",lat:35.6985,lng:139.7710,rating:5,tags:["秋葉原","カウンター","一人向き","駅近","ランチ"],memo:"電気街側で一人利用しやすい。"},
+  {id:"solo_yakiniku_006",name:"焼肉ライク 池袋東口店",type:"1人焼肉",area:"tokyo",cityArea:"池袋",address:"東京都豊島区東池袋1-40-3",lat:35.7312,lng:139.7131,rating:5,tags:["池袋","カウンター","一人向き","駅近","ランチ"],memo:"池袋東口エリア。"},
+  {id:"solo_yakiniku_007",name:"焼肉ライク 高田馬場店",type:"1人焼肉",area:"tokyo",cityArea:"高田馬場",address:"東京都新宿区高田馬場2-18-11",lat:35.7120,lng:139.7048,rating:5,tags:["高田馬場","カウンター","一人向き","学生向き","ランチ"],memo:"サクッと食べやすい。"},
+  {id:"solo_yakiniku_008",name:"焼肉ライク 吉祥寺南口店",type:"1人焼肉",area:"tokyo",cityArea:"吉祥寺",address:"東京都武蔵野市吉祥寺南町1-1-2",lat:35.7024,lng:139.5796,rating:5,tags:["吉祥寺","カウンター","一人向き","駅近","ランチ"],memo:"中央線沿線向け。"},
+  {id:"solo_yakiniku_009",name:"焼肉ライク 立川通り店",type:"1人焼肉",area:"tokyo",cityArea:"立川",address:"東京都立川市曙町2-7-20",lat:35.6996,lng:139.4145,rating:5,tags:["立川","カウンター","一人向き","駅近","ランチ"],memo:"多摩エリアの候補。"},
+  {id:"solo_yakiniku_010",name:"治郎丸 秋葉原店",type:"立ち食い焼肉",area:"tokyo",cityArea:"秋葉原",address:"東京都千代田区外神田1-2-3",lat:35.6988,lng:139.7700,rating:4,tags:["秋葉原","立ち食い","一人向き","少量注文","駅近"],memo:"少量ずつ楽しみやすい立ち食い系。"},
+  {id:"solo_yakiniku_011",name:"治郎丸 新宿本店",type:"立ち食い焼肉",area:"tokyo",cityArea:"新宿",address:"東京都新宿区歌舞伎町1-26-3",lat:35.6940,lng:139.7007,rating:4,tags:["新宿","立ち食い","一人向き","少量注文"],memo:"歌舞伎町エリアの一人向け焼肉候補。"},
+  {id:"solo_yakiniku_012",name:"治郎丸 渋谷店",type:"立ち食い焼肉",area:"tokyo",cityArea:"渋谷",address:"東京都渋谷区道玄坂2-6-7",lat:35.6588,lng:139.6992,rating:4,tags:["渋谷","立ち食い","一人向き","少量注文","駅近"],memo:"一人でも入りやすい立ち食い焼肉。"},
+  {id:"solo_yakiniku_013",name:"焼肉 山河 亀有店",type:"焼肉",area:"tokyo",cityArea:"亀有",address:"東京都葛飾区亀有5-32-11",lat:35.7669,lng:139.8479,rating:3,tags:["亀有","コスパ","一人利用可","ランチ"],memo:"一人利用できる焼肉候補。"},
+  {id:"solo_yakiniku_014",name:"大阪焼肉・ホルモン ふたご 新橋本館",type:"焼肉ホルモン",area:"tokyo",cityArea:"新橋",address:"東京都港区新橋3-16-18",lat:35.6656,lng:139.7576,rating:3,tags:["新橋","ホルモン","一人利用可","夜向き"],memo:"混雑時間は事前確認推奨。"},
+  {id:"solo_yakiniku_015",name:"焼肉ホルモン 新井屋 渋谷",type:"焼肉ホルモン",area:"tokyo",cityArea:"渋谷",address:"東京都渋谷区道玄坂2-19-11",lat:35.6598,lng:139.6962,rating:3,tags:["渋谷","ホルモン","一人利用可","夜向き"],memo:"一人利用は混雑状況確認推奨。"},
+  {id:"solo_yakiniku_016",name:"肉屋の台所 上野店",type:"焼肉",area:"tokyo",cityArea:"上野",address:"東京都台東区上野6-14-7",lat:35.7114,lng:139.7762,rating:3,tags:["上野","焼肉","一人利用可","駅近"],memo:"一人利用は時間帯に注意。"},
+  {id:"solo_yakiniku_017",name:"牛繁 新宿1号店",type:"焼肉",area:"tokyo",cityArea:"新宿",address:"東京都新宿区新宿3-11-10",lat:35.6908,lng:139.7063,rating:3,tags:["新宿","チェーン","一人利用可","駅近"],memo:"チェーン系で使いやすい。"},
+  {id:"solo_yakiniku_018",name:"牛角 赤坂店",type:"焼肉",area:"tokyo",cityArea:"赤坂",address:"東京都港区赤坂3-12-11",lat:35.6743,lng:139.7372,rating:3,tags:["赤坂","チェーン","一人利用可","夜向き"],memo:"一人利用は席状況を確認。"},
+  {id:"solo_yakiniku_019",name:"安安 池袋東口店",type:"焼肉",area:"tokyo",cityArea:"池袋",address:"東京都豊島区東池袋1-15-1",lat:35.7299,lng:139.7136,rating:3,tags:["池袋","コスパ","チェーン","一人利用可"],memo:"安く焼肉を食べたい時の候補。"},
+  {id:"solo_yakiniku_020",name:"七輪焼肉 安安 吉祥寺店",type:"焼肉",area:"tokyo",cityArea:"吉祥寺",address:"東京都武蔵野市吉祥寺本町1-9-10",lat:35.7041,lng:139.5799,rating:3,tags:["吉祥寺","コスパ","チェーン","一人利用可"],memo:"一人利用は混雑時間を避けると楽。"}
+];
+
+let stores = [];
+let filteredStores = [];
+let map;
+let markers = [];
+
+async function init(){
+  stores = await loadStoresFromCsvUrl();
+  map = L.map("map").setView([35.681236,139.767125], 11);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom:19,
+    attribution:"&copy; OpenStreetMap contributors"
+  }).addTo(map);
+
+  document.getElementById("areaMode").addEventListener("change", applySearch);
+  document.getElementById("keyword").addEventListener("input", applySearch);
+  exportCsv();
+  buildAreas();
+  applySearch();
+}
+
+function loadStores(){
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if(saved) return JSON.parse(saved);
+  } catch(e) {}
+  return DEFAULT_STORES;
+}
+
+async function loadStoresFromCsvUrl(){
+  if(!CSV_URL) return loadStores();
+  try {
+    const res = await fetch(CSV_URL);
+    const text = await res.text();
+    const data = parseCsvText(text, "スプレッドシート読込");
+    if(data.length) return data;
+  } catch(e) {
+    console.error("CSV読み込み失敗", e);
+  }
+  return loadStores();
+}
+
+function saveStores(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stores));
+}
+
+function cleanText(s){
+  return String(s ?? "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\uFEFF/g, "")
+    .replace(/[“”]/g, '"')
+    .replace(/[，]/g, ",")
+    .trim();
+}
+
+function parseCsvLine(line){
+  const out = [];
+  let cur = "";
+  let q = false;
+  for(let i=0;i<line.length;i++){
+    const ch = line[i];
+    if(ch === '"' && line[i+1] === '"'){cur += '"'; i++;}
+    else if(ch === '"') q = !q;
+    else if(ch === "," && !q){out.push(cleanText(cur)); cur = "";}
+    else cur += ch;
+  }
+  out.push(cleanText(cur));
+  return out;
+}
+
+function parseCsvText(raw, memoDefault){
+  const text = cleanText(raw);
+  const lines = text.split(/\r?\n/).map(x => cleanText(x)).filter(Boolean);
+  if(!lines.length) return [];
+
+  const headerRaw = parseCsvLine(lines.shift()).map(h => cleanText(h));
+  const header = headerRaw.map(h => h.toLowerCase());
+  const data = [];
+
+  lines.forEach((line) => {
+    const vals = parseCsvLine(line);
+    const row = {};
+    header.forEach((h,i) => row[h] = vals[i] ?? "");
+
+    let obj = null;
+
+    if(header.includes("id") && header.includes("name")){
+      obj = {
+        id: row.id,
+        name: row.name,
+        type: row.type || "1人焼肉",
+        area: "tokyo",
+        cityArea: row.cityarea || row.area || "",
+        address: row.address,
+        lat: Number(row.lat),
+        lng: Number(row.lng),
+        rating: Number(row.rating || 4),
+        tags: String(row.tags || "").split("|").map(cleanText).filter(Boolean),
+        memo: row.memo || memoDefault || "CSV追加"
+      };
+    }
+
+    if(!obj || !validStore(obj)){
+      if(vals.length >= 7){
+        obj = {
+          id: vals[0],
+          name: vals[1],
+          type: "1人焼肉",
+          area: "tokyo",
+          cityArea: vals[2],
+          address: vals[3],
+          lat: Number(vals[4]),
+          lng: Number(vals[5]),
+          rating: 4,
+          tags: String(vals.slice(6).join("|")).split("|").map(cleanText).filter(Boolean),
+          memo: memoDefault || "CSV追加"
+        };
+      }
+    }
+
+    if(!obj || !validStore(obj)){
+      if(vals.length >= 8){
+        obj = {
+          id: vals[0],
+          name: vals[1],
+          type: vals[2] || "1人焼肉",
+          area: "tokyo",
+          cityArea: vals[4] || vals[3],
+          address: vals[5],
+          lat: Number(vals[6]),
+          lng: Number(vals[7]),
+          rating: Number(vals[8] || 4),
+          tags: String(vals[9] || "").split("|").map(cleanText).filter(Boolean),
+          memo: vals[10] || memoDefault || "CSV追加"
+        };
+      }
+    }
+
+    if(obj){
+      if(!obj.cityArea || obj.cityArea === "tokyo") {
+        obj.cityArea = inferArea([obj.name,obj.address,obj.tags.join("|"),obj.memo].join(" "));
+      }
+      if(!obj.tags.includes(obj.cityArea)) obj.tags.unshift(obj.cityArea);
+      if(!obj.tags.some(t => t.includes("一人"))) obj.tags.push("一人利用可");
+    }
+
+    if(obj && validStore(obj)) data.push(obj);
+  });
+
+  return data;
+}
+
+function isNum(v){
+  return Number.isFinite(Number(v));
+}
+
+function validStore(s){
+  return s.id && s.name && isNum(s.lat) && isNum(s.lng);
+}
+
+function inferArea(text){
+  const t = String(text || "");
+  const rules = [
+    ["新宿",["新宿","西新宿","歌舞伎町","高田馬場","早稲田"]],
+    ["渋谷",["渋谷","道玄坂","宇田川町","宮益坂"]],
+    ["池袋",["池袋","東池袋","南池袋","西池袋"]],
+    ["秋葉原",["秋葉原","外神田","神田"]],
+    ["上野",["上野","御徒町","湯島","鶯谷"]],
+    ["新橋",["新橋","汐留"]],
+    ["銀座",["銀座","有楽町","築地"]],
+    ["赤坂",["赤坂","溜池山王"]],
+    ["六本木",["六本木","麻布"]],
+    ["恵比寿",["恵比寿","代官山"]],
+    ["中目黒",["中目黒"]],
+    ["五反田",["五反田","大崎"]],
+    ["品川",["品川","高輪"]],
+    ["中野",["中野","新中野","中野坂上","東中野"]],
+    ["吉祥寺",["吉祥寺","井の頭","井之頭"]],
+    ["立川",["立川","西国立"]],
+    ["亀有",["亀有"]],
+    ["北千住",["北千住"]],
+    ["錦糸町",["錦糸町","両国"]],
+    ["町田",["町田"]]
+  ];
+  for(const [area, words] of rules){
+    if(words.some(w => t.includes(w))) return area;
+  }
+  return "その他";
+}
+
+function applyCsv(){
+  const msg = document.getElementById("message");
+  msg.innerHTML = "";
+  const raw = document.getElementById("csvInput").value;
+  const text = cleanText(raw);
+  if(!text){
+    msg.innerHTML = '<div class="err">CSVが空です。</div>';
+    return;
+  }
+
+  const data = parseCsvText(text, "CSV追加");
+
+  if(!data.length){
+    msg.innerHTML = '<div class="err">読み込める行がありません。CSVのヘッダーとlat/lngを確認してください。</div>';
+    return;
+  }
+
+  stores = data;
+  saveStores();
+  exportCsv();
+  buildAreas();
+  document.getElementById("areaMode").value = "all";
+  applySearch();
+
+  msg.innerHTML = '<div class="ok">' + data.length + '件読み込みました。</div>';
+}
+
+function buildAreas(){
+  const select = document.getElementById("areaMode");
+  const current = select.value || "all";
+  const areas = [...new Set(stores.map(s => s.cityArea || "その他"))].sort((a,b)=>a.localeCompare(b,"ja"));
+  select.innerHTML = '<option value="all">東京全体</option>';
+  areas.forEach(a => {
+    const opt = document.createElement("option");
+    opt.value = a;
+    opt.textContent = a;
+    select.appendChild(opt);
+  });
+  select.value = current === "all" || areas.includes(current) ? current : "all";
+}
+
+function applySearch(){
+  const area = document.getElementById("areaMode").value;
+  const kw = document.getElementById("keyword").value.toLowerCase().trim();
+  filteredStores = stores.filter(s => {
+    const text = [s.id,s.name,s.type,s.cityArea,s.address,(s.tags||[]).join("|"),s.memo].join(" ").toLowerCase();
+    return (area === "all" || s.cityArea === area) && (!kw || text.includes(kw));
+  });
+  renderResults();
+  renderMarkers();
+  showResults();
+  setStatus(filteredStores.length + "件表示 / 全" + stores.length + "件");
+}
+
+function renderResults(){
+  const box = document.getElementById("resultsBox");
+  if(!filteredStores.length){
+    box.innerHTML = '<p class="small">該当なし。エリアを東京全体にするか、キーワードを短くしてください。</p>';
+    return;
+  }
+  box.innerHTML = filteredStores.map((s,i) => `
+    <div class="shop">
+      <h3>${i+1}. ${esc(s.name)}</h3>
+      <p>${esc(s.address)}</p>
+      <p><span class="score">一人向き度 ${esc(s.rating || 4)}/5</span><span class="tag">${esc(s.cityArea)}</span><span class="tag">${esc(s.type)}</span>${(s.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}</p>
+      <p>${esc(s.memo || "")}</p>
+      <div class="btns">
+        <button class="secondary" onclick="focusStore('${escAttr(s.id)}')">地図で見る</button>
+        <button onclick="openGoogle('${escAttr(s.id)}')">Googleマップ</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function validCoord(s){
+  const lat = Number(s.lat);
+  const lng = Number(s.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= 20 && lat <= 46 && lng >= 122 && lng <= 154;
+}
+
+function renderMarkers(){
+  markers.forEach(m => m.remove());
+  markers = [];
+  const list = filteredStores.filter(validCoord);
+  if(!list.length) return;
+  const bounds = [];
+  list.forEach(s => {
+    const marker = L.marker([Number(s.lat),Number(s.lng)]).addTo(map);
+    marker.storeId = s.id;
+    marker.bindPopup("<b>" + esc(s.name) + "</b><br>" + esc(s.address) + "<br>一人向き度 " + esc(s.rating || 4) + "/5");
+    markers.push(marker);
+    bounds.push([Number(s.lat),Number(s.lng)]);
+  });
+  if(bounds.length === 1) map.setView(bounds[0], 15);
+  else map.fitBounds(bounds, {padding:[30,30], maxZoom:14});
+  setTimeout(()=>map.invalidateSize(),100);
+}
+
+function focusStore(id){
+  const s = stores.find(x => x.id === id);
+  if(!s || !validCoord(s)) return;
+  map.setView([Number(s.lat),Number(s.lng)], 16);
+  const m = markers.find(x => x.storeId === id);
+  if(m) m.openPopup();
+}
+
+function openGoogle(id){
+  const s = stores.find(x => x.id === id);
+  if(!s) return;
+  window.open("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " " + s.address), "_blank");
+}
+
+function exportCsv(){
+  const header = "id,name,area,address,lat,lng,tags";
+  const rows = stores.map(s => [
+    s.id,
+    s.name,
+    s.cityArea,
+    s.address,
+    s.lat,
+    s.lng,
+    (s.tags||[]).join("|")
+  ].map(csvEscape).join(","));
+  const csv = header + "\n" + rows.join("\n");
+  document.getElementById("csvInput").value = csv;
+  document.getElementById("jsonBox").value = JSON.stringify(stores,null,2);
+}
+
+function csvEscape(v){
+  const s = String(v ?? "");
+  if(/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+
+function resetStores(){
+  localStorage.removeItem(STORAGE_KEY);
+  stores = DEFAULT_STORES;
+  exportCsv();
+  buildAreas();
+  applySearch();
+}
+
+function showData(){
+  document.getElementById("dataBox").style.display = "block";
+  document.getElementById("resultsBox").style.display = "none";
+}
+
+function showResults(){
+  document.getElementById("dataBox").style.display = "none";
+  document.getElementById("resultsBox").style.display = "grid";
+}
+
+function setStatus(t){document.getElementById("status").textContent = t;}
+
+function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));}
+function escAttr(s){return String(s??"").replace(/[\\'"<>]/g,"");}
+
+window.addEventListener("load", init);
+</script>
+
+<!-- 下部広告 -->
+<div style="max-width:1200px;margin:30px auto 20px;padding:0 16px;">
+  <div style="
+    background:#1c1917;
+    border-radius:18px;
+    padding:16px;
+    border:1px solid rgba(255,255,255,.12);
+    text-align:center;
+  ">
+
+    <script async
+      src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8398161859137802"
+      crossorigin="anonymous"></script>
+
+    <!-- 1人焼肉DB下部 -->
+    <ins class="adsbygoogle"
+         style="display:block"
+         data-ad-client="ca-pub-8398161859137802"
+         data-ad-slot="5599163841"
+         data-ad-format="auto"
+         data-full-width-responsive="true"></ins>
+
+    <script>
+      (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
+
+  </div>
+</div>
+</body>
+</html>
